@@ -17,6 +17,7 @@ ALLOWED_PATHS = (
     'include/module.modulemap', 'include/OfficePdfKernel.h', 'src/OfficePdfKernel.mm',
     'src/OfficePdfRegistration.cxx',
     'ci/office-pdf-ios.yml', 'ci/README.md', 'ci/run.py', 'ci/test_run.py', 'ci/pkg_config.py',
+    'ci/checkpoint.py', 'ci/test_checkpoint.py',
     'ci/package_sources.py', 'ci/restore-source.py', 'ci/test_sources.py',
     'tests/input_fixtures.py', 'tests/input_main.swift', 'tests/input_README.md', 'tests/input_run.py',
     'tests/OfficePdfTaskGateTests.swift', 'tests/test_build_kernel.py', 'tests/test_offline_policy.py', 'tests/test_build_compat.py', 'tests/test_vcl_contract.py',
