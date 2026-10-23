@@ -1,0 +1,44 @@
+name: Office PDF iOS candidate
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'probe 仅探测资源；build 尝试完整源码构建，可能受标准 runner 资源限制'
+        required: true
+        default: probe
+        type: choice
+        options:
+          - probe
+          - build
+permissions:
+  contents: read
+concurrency:
+  group: office-pdf-ios-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  candidate:
+    runs-on: macos-15-intel
+    timeout-minutes: ${{ inputs.mode == 'probe' && 10 || 350 }}
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      CI_MODE: ${{ inputs.mode }}
+    steps:
+      - name: 获取已选仓库的候选源码
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: 校验并恢复纯文本内核源码
+        run: python3 restore-source.py --manifest kernel-source.json --destination .
+      - name: 校验源码传输边界
+        run: python3 native-kernels/lizhao-office-pdf-ios/ci/test_sources.py
+      - name: 标准 runner 预检或完整构建
+        timeout-minutes: ${{ inputs.mode == 'probe' && 5 || 325 }}
+        run: python3 native-kernels/lizhao-office-pdf-ios/ci/run.py --mode "$CI_MODE" --work "$RUNNER_TEMP/office-pdf-ios"
+      - name: 保留日志、身份和候选产物
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: office-pdf-ios-${{ inputs.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/office-pdf-ios/evidence
+          if-no-files-found: warn
+          retention-days: 1
