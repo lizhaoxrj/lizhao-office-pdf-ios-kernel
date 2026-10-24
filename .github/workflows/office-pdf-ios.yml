@@ -3,13 +3,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'probe 仅探测资源；build 按官方成功目标分阶段完整构建'
+        description: 'probe 探测；build 完整构建；inspect-run7 只读取证受信SW原件'
         required: true
         default: probe
         type: choice
         options:
           - probe
           - build
+          - inspect-run7
 permissions:
   contents: read
 concurrency:
@@ -356,5 +357,45 @@ jobs:
         with:
           name: office-pdf-ios-build-final-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/office-pdf-ios/evidence/logs
+          if-no-files-found: warn
+          retention-days: 1
+  inspect_run7:
+    if: inputs.mode == 'inspect-run7'
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - name: 获取已选仓库的取证源码
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: 校验并恢复纯文本内核源码
+        run: python3 restore-source.py --manifest kernel-source.json --destination .
+      - name: 校验源码传输和取证边界
+        run: |
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_sources.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_inspect_link.py
+      - name: 仅取回已核验的第7轮SW缓存
+        id: inspection_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          # cache版本含path；与原SW保存路径逐字相同，禁止换目录借前缀恢复。
+          path: ${{ runner.temp }}/office-pdf-checkpoint
+          key: office-pdf-ios-checkpoint-v1-caef5abbbd500cf0e8feb2d6c08c8777bcfb2c0cfa89c52d200ce60a083714a2-sw
+          fail-on-cache-miss: true
+      - name: 拒绝缓存前缀匹配
+        env:
+          CACHE_HIT: ${{ steps.inspection_cache.outputs.cache-hit }}
+        run: test "$CACHE_HIT" = true
+      - name: 只读采集已存在的对象与引用
+        run: python3 native-kernels/lizhao-office-pdf-ios/ci/inspect_link.py --work "$RUNNER_TEMP/office-pdf-ios" --cache "$RUNNER_TEMP/office-pdf-checkpoint" --evidence "$RUNNER_TEMP/office-pdf-inspect-evidence"
+      - name: 保留有界取证JSON与日志
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: office-pdf-ios-inspect-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/office-pdf-inspect-evidence
           if-no-files-found: warn
           retention-days: 1
