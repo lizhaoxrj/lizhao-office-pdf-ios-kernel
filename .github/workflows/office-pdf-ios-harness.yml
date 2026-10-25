@@ -1,0 +1,67 @@
+name: Office PDF iOS public C ABI harness
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: office-pdf-ios-kernel
+  cancel-in-progress: false
+jobs:
+  harness:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: 检出本次consumer的固定提交
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: 核受信恢复器并恢复39项公开文本源
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, stat
+          path = pathlib.Path('restore-source.py')
+          fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+          with os.fdopen(fd, 'rb') as stream:
+              before = os.fstat(stream.fileno())
+              if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size != 5700:
+                  raise ValueError('受信恢复器普通独立文件/大小失败')
+              raw = stream.read(5701)
+              after = os.fstat(stream.fileno())
+              stable = ('st_dev', 'st_ino', 'st_mode', 'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+              if len(raw) != 5700 or hashlib.sha256(raw).hexdigest() != '2d2402ae2a3f68cf45917ba3fefd36dfb3707f13a608007305b22c7341e04167':
+                  raise ValueError('受信恢复器SHA失败')
+              final = path.lstat()
+              if any(getattr(before, key) != getattr(after, key) or getattr(after, key) != getattr(final, key) for key in stable):
+                  raise ValueError('受信恢复器同fd或路径身份变化')
+          PY
+          python3 restore-source.py --manifest kernel-source.json --destination "$GITHUB_WORKSPACE"
+      - name: 精确恢复已审producer的final候选缓存
+        id: candidate
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-checkpoint
+          key: office-pdf-ios-checkpoint-v1-7abb8cb2013c4f34181396aed61fe3afee33f28a2b82e38d4bc8d077f2755ee4-final
+          fail-on-cache-miss: true
+      - name: 受控Mac回归、Apple编译链接与unsigned资源staging
+        timeout-minutes: 35
+        working-directory: native-kernels/lizhao-office-pdf-ios
+        env:
+          CANDIDATE_CACHE_HIT: ${{ steps.candidate.outputs.cache-hit }}
+        shell: bash
+        run: |
+          test "$CANDIDATE_CACHE_HIT" = true
+          python3 acceptance/build_harness.py --checkpoint "$RUNNER_TEMP/office-pdf-checkpoint" --work "$RUNNER_TEMP/office-pdf-harness" --evidence "$GITHUB_WORKSPACE/ci-logs"
+      - name: 仅上传已预算核验并封存的JSON和日志
+        if: ${{ always() && hashFiles('ci-logs/upload/SEALED.json') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: office-pdf-ios-harness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-logs/upload/*
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 1
