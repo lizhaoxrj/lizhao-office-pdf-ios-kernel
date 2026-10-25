@@ -1,23 +1,19 @@
 lizhao-office-pdf-ios-kernel
 
-本仓库提供固定范围的 LibreOffice iOS 离线文档转 PDF 内核构建候选、移植补丁及 C ABI 封装，不包含完整 lizhao-office-pdf UTS 插件或业务项目。
-目标格式为 DOC、DOCX、PPT、PPTX。当前尚未完成完整 Apple 编译、资源集成、离线资格和真机功能验收；不得将候选描述为可用发行版本。
+本公开仓库仅含LibreOffice iOS内核移植、C ABI封装、公开合成夹具与构建材料，不含完整UTS插件、私有Bridge/UTS/生成Swift、客户文档、凭据或证书。
 
-源码与构建
-kernel-source.json 仅包含精确白名单内的纯文本内核源码、测试和构建文件。restore-source.py 校验白名单、长度和 SHA-256 后恢复 native-kernels/lizhao-office-pdf-ios/，拒绝覆盖已有目录。
-本地查看：python3 restore-source.py --manifest kernel-source.json --destination .
-GitHub Actions 工作流位于 .github/workflows/office-pdf-ios.yml，仅允许 workflow_dispatch；mode=probe 探测环境，mode=build 顺序执行 tools、vcl、sd、sw、final 五个真实构建阶段。
-阶段目标为 cross-toolset、vcl.allbuild、sd.allbuild、sw.allbuild、build，保留最终完整构建与资源封装，不裁剪格式、模块或注册表。使用标准 macos-15-intel，凭据不保留，无证书或付费 runner。
-成功阶段通过精确身份、前阶段 SHA 和安全归档检查后才能续编；单缓存连同清单及预留开销不超过 4GiB，不调整仓库默认缓存或付费限额。缺失、超限或身份不符立即失败，不静默重建。
-artifact 仅保留有界 JSON 和原始日志 1 天，不上传构建树或候选大二进制。最终候选单独保存于有界缓存，清单、SHA、体积和缓存键见 CANDIDATE-INVENTORY.json、CANDIDATE-CACHE.json；保存后必须精确查询命中。
-缓存会受服务的默认淘汰规则影响，不保证永久保存。最终候选的免费取回方式仍须按实际产物核对；阶段成功或缓存命中不等于插件可用、离线资格或真机验收通过。
-内嵌 native-kernels/lizhao-office-pdf-ios/ci/README.md 记录构建细节及历史说明；本公开仓库不导入旧私有仓库历史或完整插件。
+固定生产者候选为完整构建 #12 / run40131160579 / source5d8083b9e6aeba055d0ae58761271e5341f04bb2。五阶段已成功，真实arm64/iPhoneOS/最低14.5最终force_load链接及资源原件已核；内核仍acceptanceOnly/testOnly，available=false、strictOffline=false。这些构建证据不代表已执行转换、私有宿主联编、严格离线或设备验收。
 
-来源与许可边界
-上游固定为 LibreOffice libreoffice-26.2.6.3，commit 8221e31b3ac356a1623c672912a3d2b492f7e3d1。
-上游源码、片段及对应修改保留其原有版权和文件许可声明。官方源码与许可：
-https://github.com/LibreOffice/core/tree/8221e31b3ac356a1623c672912a3d2b492f7e3d1
-https://raw.githubusercontent.com/LibreOffice/core/8221e31b3ac356a1623c672912a3d2b492f7e3d1/COPYING.MPL
-https://raw.githubusercontent.com/LibreOffice/core/8221e31b3ac356a1623c672912a3d2b492f7e3d1/COPYING.LGPL
-第三方依赖保留各自声明。本说明不为作者独立封装及构建代码另行新增整体许可证，也不授予未公开完整插件的使用权。
-实际二进制和资源分发前仍须核对所含组件、字体及对应许可和源码提供要求；当前候选构建不能替代该清单或功能验收。
+kernel-source.json恰含39项白名单UTF-8源码/文本材料；restore-source.py在长度、SHA与路径检查后恢复native-kernels/lizhao-office-pdf-ios/，拒绝覆盖。恢复器必须使用本次受审原件，不能以远端JSON扩大白名单。本地查看命令：python3 restore-source.py --manifest kernel-source.json --destination .
+
+.github/workflows/office-pdf-ios.yml是保留原件的主构建流程；本次main/build已经运行一次，不再触发或重建。独立office-pdf-ios-export.yml仅供本线程已批准并已完成的一次固定两文件短期下载例外，例外不扩成常规二进制artifact策略。
+
+新增.github/workflows/office-pdf-ios-harness.yml只允许手工触发，标准免费macos-15-intel、contents:read、原串行组。它精确恢复固定producer的final缓存，cache-hit与两文件/producer/完整2583成员和2410文件身份必须通过，无前缀回退、cache-save/delete或make。消费者commit/run/attempt另行记录，不能冒充producer。通过本次源码/工具/远端审查后仅发起独立harness一次。
+
+公开Swift入口直接import OfficePdfKernel，并真实引用ProbeJSON、生产ConvertJSON拒绝负对照、AcceptanceConvertJSON、FreeString；编译-Onone对象核四引用，保留原force_load及12framework/5系统库，增加PDFKit。真实Apple编译、链接、vtool和完整unsigned App形状资源staging仅证明相应构建层，不执行iPhoneOS二进制、不签证或安装。输入提取后固定实际fs身份，资源staging后编译前和链接后必须以同一dev/inode/mode/nlink/size/mtime_ns/ctime_ns映射及全SHA/路径核对；归档ns与文件系统精度边界分别报告。
+
+harness只上传经过封存的有界JSON/log：单文件32MiB、总128MiB且留1MiB元数据余量，无framework、payload、exe、App或IPA大artifact。原候选与缓存保留；主ICU与完整资源bundle分别staging到App根，不把静态framework作为动态库embed。当前没有设备运行或私有SwiftCompile证据，harness也不是可安装基座。
+
+acceptance/notices-source.json包含109项内部unsigned验收许可/来源材料：107份原件与2份显式脱敏派生索引，逐项长度/SHA/base64与来源可核。OpenSymbol许可出处、字体源包对应、其余对象来源、配置化LICENSE、对应源码和静态重链接交付材料等六项外发缺口完整保留；redistributionApproved=false，不能把本材料或URL当完整再分发资格。
+
+详细合同与各阶段边界在恢复后的native-kernels/lizhao-office-pdf-ios/ci/README.md。实际结果必须读取对应run/attempt的官方原始日志和回执；源码检查、Windows测试、cache命中及目录呈App形状均不等于Apple编译成功或运行成功。

@@ -16,10 +16,12 @@ ALLOWED_PATHS = (
     'OFFLINE_POLICY.md', 'README.md',
     'include/module.modulemap', 'include/OfficePdfKernel.h', 'src/OfficePdfKernel.mm',
     'src/OfficePdfRegistration.cxx',
-    'ci/office-pdf-ios.yml', 'ci/export_candidate.yml', 'ci/README.md', 'ci/run.py', 'ci/test_run.py', 'ci/pkg_config.py',
+    'ci/office-pdf-ios.yml', 'ci/export_candidate.yml', 'ci/harness.yml', 'ci/README.md', 'ci/run.py', 'ci/test_run.py', 'ci/pkg_config.py',
     'ci/checkpoint.py', 'ci/test_checkpoint.py',
     'ci/inspect_link.py', 'ci/test_inspect_link.py', 'ci/inspect_run7.json',
     'ci/package_sources.py', 'ci/restore-source.py', 'ci/test_sources.py',
+    'acceptance/KernelAbiAcceptance.swift', 'acceptance/build_harness.py',
+    'acceptance/test_build_harness.py', 'acceptance/notices-source.json',
     'tests/input_fixtures.py', 'tests/input_main.swift', 'tests/input_README.md', 'tests/input_run.py',
     'tests/OfficePdfTaskGateTests.swift', 'tests/test_build_kernel.py', 'tests/test_offline_policy.py', 'tests/test_build_compat.py', 'tests/test_vcl_contract.py',
 )
