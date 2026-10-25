@@ -1,0 +1,432 @@
+name: Office PDF iOS compact candidate
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'probe 只预检；build 独立compact全图构建与尺寸回执'
+        required: true
+        default: probe
+        type: choice
+        options:
+          - probe
+          - build
+permissions:
+  contents: read
+concurrency:
+  group: office-pdf-ios-kernel
+  cancel-in-progress: false
+jobs:
+  probe:
+    if: inputs.mode == 'probe'
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: 获取已选仓库的候选源码
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: 绑定本轮compact清单并恢复独立源码
+        run: |
+          COMPACT_SOURCE="$RUNNER_TEMP/office-pdf-ios-compact-source"
+          mkdir "$COMPACT_SOURCE"
+          cp compact-kernel-source.json "$COMPACT_SOURCE/kernel-source.json"
+          python3 compact-restore-source.py --manifest "$COMPACT_SOURCE/kernel-source.json" --destination "$COMPACT_SOURCE"
+      - name: 校验compact源码、测量及原适用回归
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: |
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_sources.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_checkpoint.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_inspect_link.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_compact_profile.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_measure_compact.py
+          python3 native-kernels/lizhao-office-pdf-ios/tests/test_compact_resources.py
+      - name: 标准 runner 预检
+        timeout-minutes: 5
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: python3 native-kernels/lizhao-office-pdf-ios/ci/run.py --mode probe --work "$RUNNER_TEMP/office-pdf-ios-compact"
+      - name: 保留预检证据
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: office-pdf-ios-compact-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/office-pdf-ios-compact/evidence/logs
+          if-no-files-found: warn
+          retention-days: 1
+  tools:
+    if: inputs.mode == 'build'
+    runs-on: macos-15-intel
+    timeout-minutes: 350
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    outputs:
+      cache_key: ${{ steps.phase.outputs.cache_key }}
+      payload_sha: ${{ steps.phase.outputs.payload_sha }}
+      manifest_sha: ${{ steps.phase.outputs.manifest_sha }}
+    steps:
+      - name: 获取已选仓库的候选源码
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: 绑定本轮compact清单并恢复独立源码
+        run: |
+          COMPACT_SOURCE="$RUNNER_TEMP/office-pdf-ios-compact-source"
+          mkdir "$COMPACT_SOURCE"
+          cp compact-kernel-source.json "$COMPACT_SOURCE/kernel-source.json"
+          python3 compact-restore-source.py --manifest "$COMPACT_SOURCE/kernel-source.json" --destination "$COMPACT_SOURCE"
+      - name: 校验compact源码、测量及原适用回归
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: |
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_sources.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_checkpoint.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_inspect_link.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_compact_profile.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_measure_compact.py
+          python3 native-kernels/lizhao-office-pdf-ios/tests/test_compact_resources.py
+      - name: 官方完整图阶段 tools
+        id: phase
+        timeout-minutes: 325
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: python3 native-kernels/lizhao-office-pdf-ios/ci/run.py --mode build --phase tools --work "$RUNNER_TEMP/office-pdf-ios-compact" --cache "$RUNNER_TEMP/office-pdf-compact-checkpoint"
+      - name: 保存当前成功阶段或最终候选的免费缓存
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ steps.phase.outputs.cache_key }}
+      - name: 核验缓存已实际持久化
+        id: persisted_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ steps.phase.outputs.cache_key }}
+          lookup-only: true
+          fail-on-cache-miss: true
+      - name: 缓存持久化必须精确命中
+        env:
+          CACHE_HIT: ${{ steps.persisted_cache.outputs.cache-hit }}
+          CACHE_KEY: ${{ steps.phase.outputs.cache_key }}
+        run: |
+          test "$CACHE_HIT" = true
+          python3 -c 'import json,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_text(json.dumps({"cacheHit": True, "cacheKey": os.environ["CACHE_KEY"], "stage": "tools"}, indent=2)+"\n")' "$RUNNER_TEMP/office-pdf-ios-compact/evidence/logs/CACHE-PERSISTENCE.json"
+      - name: 保留阶段证据（不含构建检查点）
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: office-pdf-ios-compact-build-tools-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/office-pdf-ios-compact/evidence/logs
+          if-no-files-found: warn
+          retention-days: 1
+  vcl:
+    if: inputs.mode == 'build'
+    needs: tools
+    runs-on: macos-15-intel
+    timeout-minutes: 350
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      PREVIOUS_PAYLOAD_SHA: ${{ needs.tools.outputs.payload_sha }}
+      PREVIOUS_MANIFEST_SHA: ${{ needs.tools.outputs.manifest_sha }}
+    outputs:
+      cache_key: ${{ steps.phase.outputs.cache_key }}
+      payload_sha: ${{ steps.phase.outputs.payload_sha }}
+      manifest_sha: ${{ steps.phase.outputs.manifest_sha }}
+    steps:
+      - name: 获取已选仓库的候选源码
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: 绑定本轮compact清单并恢复独立源码
+        run: |
+          COMPACT_SOURCE="$RUNNER_TEMP/office-pdf-ios-compact-source"
+          mkdir "$COMPACT_SOURCE"
+          cp compact-kernel-source.json "$COMPACT_SOURCE/kernel-source.json"
+          python3 compact-restore-source.py --manifest "$COMPACT_SOURCE/kernel-source.json" --destination "$COMPACT_SOURCE"
+      - name: 校验compact源码、测量及原适用回归
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: |
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_sources.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_checkpoint.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_inspect_link.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_compact_profile.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_measure_compact.py
+          python3 native-kernels/lizhao-office-pdf-ios/tests/test_compact_resources.py
+      - name: 精确恢复前一成功阶段的免费缓存
+        id: restored_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ needs.tools.outputs.cache_key }}
+          fail-on-cache-miss: true
+      - name: 拒绝缓存前缀匹配
+        env:
+          CACHE_HIT: ${{ steps.restored_cache.outputs.cache-hit }}
+        run: test "$CACHE_HIT" = true
+      - name: 官方完整图阶段 vcl
+        id: phase
+        timeout-minutes: 325
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: python3 native-kernels/lizhao-office-pdf-ios/ci/run.py --mode build --phase vcl --work "$RUNNER_TEMP/office-pdf-ios-compact" --cache "$RUNNER_TEMP/office-pdf-compact-checkpoint" --payload-sha "$PREVIOUS_PAYLOAD_SHA" --manifest-sha "$PREVIOUS_MANIFEST_SHA"
+      - name: 保存当前成功阶段或最终候选的免费缓存
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ steps.phase.outputs.cache_key }}
+      - name: 核验缓存已实际持久化
+        id: persisted_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ steps.phase.outputs.cache_key }}
+          lookup-only: true
+          fail-on-cache-miss: true
+      - name: 缓存持久化必须精确命中
+        env:
+          CACHE_HIT: ${{ steps.persisted_cache.outputs.cache-hit }}
+          CACHE_KEY: ${{ steps.phase.outputs.cache_key }}
+        run: |
+          test "$CACHE_HIT" = true
+          python3 -c 'import json,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_text(json.dumps({"cacheHit": True, "cacheKey": os.environ["CACHE_KEY"], "stage": "vcl"}, indent=2)+"\n")' "$RUNNER_TEMP/office-pdf-ios-compact/evidence/logs/CACHE-PERSISTENCE.json"
+      - name: 保留阶段证据（不含构建检查点）
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: office-pdf-ios-compact-build-vcl-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/office-pdf-ios-compact/evidence/logs
+          if-no-files-found: warn
+          retention-days: 1
+  sd:
+    if: inputs.mode == 'build'
+    needs: vcl
+    runs-on: macos-15-intel
+    timeout-minutes: 350
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      PREVIOUS_PAYLOAD_SHA: ${{ needs.vcl.outputs.payload_sha }}
+      PREVIOUS_MANIFEST_SHA: ${{ needs.vcl.outputs.manifest_sha }}
+    outputs:
+      cache_key: ${{ steps.phase.outputs.cache_key }}
+      payload_sha: ${{ steps.phase.outputs.payload_sha }}
+      manifest_sha: ${{ steps.phase.outputs.manifest_sha }}
+    steps:
+      - name: 获取已选仓库的候选源码
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: 绑定本轮compact清单并恢复独立源码
+        run: |
+          COMPACT_SOURCE="$RUNNER_TEMP/office-pdf-ios-compact-source"
+          mkdir "$COMPACT_SOURCE"
+          cp compact-kernel-source.json "$COMPACT_SOURCE/kernel-source.json"
+          python3 compact-restore-source.py --manifest "$COMPACT_SOURCE/kernel-source.json" --destination "$COMPACT_SOURCE"
+      - name: 校验compact源码、测量及原适用回归
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: |
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_sources.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_checkpoint.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_inspect_link.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_compact_profile.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_measure_compact.py
+          python3 native-kernels/lizhao-office-pdf-ios/tests/test_compact_resources.py
+      - name: 精确恢复前一成功阶段的免费缓存
+        id: restored_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ needs.vcl.outputs.cache_key }}
+          fail-on-cache-miss: true
+      - name: 拒绝缓存前缀匹配
+        env:
+          CACHE_HIT: ${{ steps.restored_cache.outputs.cache-hit }}
+        run: test "$CACHE_HIT" = true
+      - name: 官方完整图阶段 sd
+        id: phase
+        timeout-minutes: 325
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: python3 native-kernels/lizhao-office-pdf-ios/ci/run.py --mode build --phase sd --work "$RUNNER_TEMP/office-pdf-ios-compact" --cache "$RUNNER_TEMP/office-pdf-compact-checkpoint" --payload-sha "$PREVIOUS_PAYLOAD_SHA" --manifest-sha "$PREVIOUS_MANIFEST_SHA"
+      - name: 保存当前成功阶段或最终候选的免费缓存
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ steps.phase.outputs.cache_key }}
+      - name: 核验缓存已实际持久化
+        id: persisted_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ steps.phase.outputs.cache_key }}
+          lookup-only: true
+          fail-on-cache-miss: true
+      - name: 缓存持久化必须精确命中
+        env:
+          CACHE_HIT: ${{ steps.persisted_cache.outputs.cache-hit }}
+          CACHE_KEY: ${{ steps.phase.outputs.cache_key }}
+        run: |
+          test "$CACHE_HIT" = true
+          python3 -c 'import json,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_text(json.dumps({"cacheHit": True, "cacheKey": os.environ["CACHE_KEY"], "stage": "sd"}, indent=2)+"\n")' "$RUNNER_TEMP/office-pdf-ios-compact/evidence/logs/CACHE-PERSISTENCE.json"
+      - name: 保留阶段证据（不含构建检查点）
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: office-pdf-ios-compact-build-sd-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/office-pdf-ios-compact/evidence/logs
+          if-no-files-found: warn
+          retention-days: 1
+  sw:
+    if: inputs.mode == 'build'
+    needs: sd
+    runs-on: macos-15-intel
+    timeout-minutes: 350
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      PREVIOUS_PAYLOAD_SHA: ${{ needs.sd.outputs.payload_sha }}
+      PREVIOUS_MANIFEST_SHA: ${{ needs.sd.outputs.manifest_sha }}
+    outputs:
+      cache_key: ${{ steps.phase.outputs.cache_key }}
+      payload_sha: ${{ steps.phase.outputs.payload_sha }}
+      manifest_sha: ${{ steps.phase.outputs.manifest_sha }}
+    steps:
+      - name: 获取已选仓库的候选源码
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: 绑定本轮compact清单并恢复独立源码
+        run: |
+          COMPACT_SOURCE="$RUNNER_TEMP/office-pdf-ios-compact-source"
+          mkdir "$COMPACT_SOURCE"
+          cp compact-kernel-source.json "$COMPACT_SOURCE/kernel-source.json"
+          python3 compact-restore-source.py --manifest "$COMPACT_SOURCE/kernel-source.json" --destination "$COMPACT_SOURCE"
+      - name: 校验compact源码、测量及原适用回归
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: |
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_sources.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_checkpoint.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_inspect_link.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_compact_profile.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_measure_compact.py
+          python3 native-kernels/lizhao-office-pdf-ios/tests/test_compact_resources.py
+      - name: 精确恢复前一成功阶段的免费缓存
+        id: restored_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ needs.sd.outputs.cache_key }}
+          fail-on-cache-miss: true
+      - name: 拒绝缓存前缀匹配
+        env:
+          CACHE_HIT: ${{ steps.restored_cache.outputs.cache-hit }}
+        run: test "$CACHE_HIT" = true
+      - name: 官方完整图阶段 sw
+        id: phase
+        timeout-minutes: 325
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: python3 native-kernels/lizhao-office-pdf-ios/ci/run.py --mode build --phase sw --work "$RUNNER_TEMP/office-pdf-ios-compact" --cache "$RUNNER_TEMP/office-pdf-compact-checkpoint" --payload-sha "$PREVIOUS_PAYLOAD_SHA" --manifest-sha "$PREVIOUS_MANIFEST_SHA"
+      - name: 保存当前成功阶段或最终候选的免费缓存
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ steps.phase.outputs.cache_key }}
+      - name: 核验缓存已实际持久化
+        id: persisted_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ steps.phase.outputs.cache_key }}
+          lookup-only: true
+          fail-on-cache-miss: true
+      - name: 缓存持久化必须精确命中
+        env:
+          CACHE_HIT: ${{ steps.persisted_cache.outputs.cache-hit }}
+          CACHE_KEY: ${{ steps.phase.outputs.cache_key }}
+        run: |
+          test "$CACHE_HIT" = true
+          python3 -c 'import json,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_text(json.dumps({"cacheHit": True, "cacheKey": os.environ["CACHE_KEY"], "stage": "sw"}, indent=2)+"\n")' "$RUNNER_TEMP/office-pdf-ios-compact/evidence/logs/CACHE-PERSISTENCE.json"
+      - name: 保留阶段证据（不含构建检查点）
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: office-pdf-ios-compact-build-sw-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/office-pdf-ios-compact/evidence/logs
+          if-no-files-found: warn
+          retention-days: 1
+  final:
+    if: inputs.mode == 'build'
+    needs: sw
+    runs-on: macos-15-intel
+    timeout-minutes: 350
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      PREVIOUS_PAYLOAD_SHA: ${{ needs.sw.outputs.payload_sha }}
+      PREVIOUS_MANIFEST_SHA: ${{ needs.sw.outputs.manifest_sha }}
+    outputs:
+      cache_key: ${{ steps.phase.outputs.cache_key }}
+      payload_sha: ${{ steps.phase.outputs.payload_sha }}
+      manifest_sha: ${{ steps.phase.outputs.manifest_sha }}
+    steps:
+      - name: 获取已选仓库的候选源码
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: 绑定本轮compact清单并恢复独立源码
+        run: |
+          COMPACT_SOURCE="$RUNNER_TEMP/office-pdf-ios-compact-source"
+          mkdir "$COMPACT_SOURCE"
+          cp compact-kernel-source.json "$COMPACT_SOURCE/kernel-source.json"
+          python3 compact-restore-source.py --manifest "$COMPACT_SOURCE/kernel-source.json" --destination "$COMPACT_SOURCE"
+      - name: 校验compact源码、测量及原适用回归
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: |
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_sources.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_checkpoint.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_inspect_link.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_compact_profile.py
+          python3 native-kernels/lizhao-office-pdf-ios/ci/test_measure_compact.py
+          python3 native-kernels/lizhao-office-pdf-ios/tests/test_compact_resources.py
+      - name: 精确恢复前一成功阶段的免费缓存
+        id: restored_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ needs.sw.outputs.cache_key }}
+          fail-on-cache-miss: true
+      - name: 拒绝缓存前缀匹配
+        env:
+          CACHE_HIT: ${{ steps.restored_cache.outputs.cache-hit }}
+        run: test "$CACHE_HIT" = true
+      - name: 官方完整图阶段 final
+        id: phase
+        timeout-minutes: 325
+        working-directory: ${{ runner.temp }}/office-pdf-ios-compact-source
+        run: python3 native-kernels/lizhao-office-pdf-ios/ci/run.py --mode build --phase final --work "$RUNNER_TEMP/office-pdf-ios-compact" --cache "$RUNNER_TEMP/office-pdf-compact-checkpoint" --payload-sha "$PREVIOUS_PAYLOAD_SHA" --manifest-sha "$PREVIOUS_MANIFEST_SHA"
+      - name: 保存当前成功阶段或最终候选的免费缓存
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ steps.phase.outputs.cache_key }}
+      - name: 核验缓存已实际持久化
+        id: persisted_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-compact-checkpoint
+          key: ${{ steps.phase.outputs.cache_key }}
+          lookup-only: true
+          fail-on-cache-miss: true
+      - name: 缓存持久化必须精确命中
+        env:
+          CACHE_HIT: ${{ steps.persisted_cache.outputs.cache-hit }}
+          CACHE_KEY: ${{ steps.phase.outputs.cache_key }}
+        run: |
+          test "$CACHE_HIT" = true
+          python3 -c 'import json,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_text(json.dumps({"cacheHit": True, "cacheKey": os.environ["CACHE_KEY"], "stage": "final"}, indent=2)+"\n")' "$RUNNER_TEMP/office-pdf-ios-compact/evidence/logs/CACHE-PERSISTENCE.json"
+      - name: 保留阶段证据（不含构建检查点）
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: office-pdf-ios-compact-build-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/office-pdf-ios-compact/evidence/logs
+          if-no-files-found: warn
+          retention-days: 1
