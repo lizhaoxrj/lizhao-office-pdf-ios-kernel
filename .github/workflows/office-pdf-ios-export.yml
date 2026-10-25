@@ -1,0 +1,88 @@
+name: Office PDF iOS candidate export run12
+on:
+  workflow_dispatch:
+    inputs:
+      approved_export_exception:
+        description: '仅在本线程已批准一次性候选下载 artifact 例外后设为 true'
+        required: true
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: office-pdf-ios-kernel
+  cancel-in-progress: false
+jobs:
+  export:
+    if: inputs.approved_export_exception == true
+    runs-on: macos-15-intel
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: 精确恢复已审查的唯一候选缓存
+        id: candidate
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-checkpoint
+          key: office-pdf-ios-checkpoint-v1-7abb8cb2013c4f34181396aed61fe3afee33f28a2b82e38d4bc8d077f2755ee4-final
+          fail-on-cache-miss: true
+      - name: 核固定两文件及唯一生产身份
+        env:
+          CANDIDATE_CACHE_HIT: ${{ steps.candidate.outputs.cache-hit }}
+        shell: bash
+        run: |
+          test "$CANDIDATE_CACHE_HIT" = true
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, stat
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'office-pdf-checkpoint'
+          if root.is_symlink() or not root.is_dir():
+              raise ValueError('candidate wrapper 必须是普通目录')
+          expected = {
+              'payload.tar.gz': (350158326, '111240b0981dd556e9947f80c3076b3270da01990841484d313daf5a3349a3eb'),
+              'manifest.json': (4790, 'bd2e818e4f43a1ffa5c09e470dbf7b77e1d50d22324baf1dea6dcc2fc97556f5'),
+          }
+          if {p.name for p in root.iterdir()} != set(expected):
+              raise ValueError('candidate wrapper 必须恰好包含两个固定文件')
+          for name, (size, digest) in expected.items():
+              path = root / name
+              fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+              with os.fdopen(fd, 'rb') as stream:
+                  before = os.fstat(stream.fileno())
+                  if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size != size:
+                      raise ValueError('candidate wrapper 普通单链接文件/大小边界失败')
+                  value, count = hashlib.sha256(), 0
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                      count += len(chunk)
+                      if count > size:
+                          raise ValueError('candidate wrapper 读取超界')
+                      value.update(chunk)
+                  after = os.fstat(stream.fileno())
+                  stable = ('st_dev', 'st_ino', 'st_mode', 'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+                  if count != size or value.hexdigest() != digest or any(getattr(before, k) != getattr(after, k) for k in stable):
+                      raise ValueError('candidate wrapper SHA/读取稳定性失败')
+          manifest = json.loads((root / 'manifest.json').read_bytes())
+          producer = manifest['identity']
+          derived_key = (manifest['format'] + '-'
+              + hashlib.sha256(json.dumps(producer, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+              + '-' + manifest['phase'])
+          if (manifest['format'] != 'office-pdf-ios-checkpoint-v1' or manifest['kind'] != 'candidate'
+                  or manifest['phase'] != 'final' or manifest['archiveRoots'] != ['candidate']
+                  or producer['GITHUB_RUN_ID'] != '40131160579' or producer['GITHUB_RUN_ATTEMPT'] != '1'
+                  or producer['GITHUB_SHA'] != '5d8083b9e6aeba055d0ae58761271e5341f04bb2'
+                  or derived_key != 'office-pdf-ios-checkpoint-v1-7abb8cb2013c4f34181396aed61fe3afee33f28a2b82e38d4bc8d077f2755ee4-final'
+                  or manifest['payloadBytes'] != expected['payload.tar.gz'][0]
+                  or manifest['payloadSha256'] != expected['payload.tar.gz'][1]):
+              raise ValueError('candidate producer 精确身份失败')
+          print('固定候选两文件逐字节身份核验通过；未解包、执行或提升生产资格。')
+          PY
+      - name: 仅一次短期下载包（需事先例外批准）
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: office-pdf-ios-candidate-export-40131160579-1
+          path: |
+            ${{ runner.temp }}/office-pdf-checkpoint/payload.tar.gz
+            ${{ runner.temp }}/office-pdf-checkpoint/manifest.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
