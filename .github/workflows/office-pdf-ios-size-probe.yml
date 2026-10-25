@@ -1,0 +1,71 @@
+name: Office PDF iOS kernel size probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: office-pdf-ios-kernel
+  cancel-in-progress: false
+jobs:
+  size_probe:
+    if: ${{ github.repository == 'lizhaoxrj/lizhao-office-pdf-ios-kernel' && github.event.repository.private == false }}
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: 检出本次尺寸consumer的固定提交
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: 核两个受信恢复器并恢复原39项与独立六项公开文本
+        shell: bash
+        run: |
+          python3 -B - <<'PY'
+          import hashlib, json, os, pathlib, stat
+          trusted = {
+              'restore-source.py': (5700, '2d2402ae2a3f68cf45917ba3fefd36dfb3707f13a608007305b22c7341e04167'),
+              'kernel-source.json': (2621399, '9728d86f9104d9484c60751b2e7e095e836c7f5da61a290a704aefd4587eb309'),
+              'size-probe-restore.py': (11687, '6e2d2803e70d902be4f6c22220334b73e96825b377238a0aa6a5c7ae23ff212e'),
+          }
+          fields = ('st_dev', 'st_ino', 'st_mode', 'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+          for name, (size, digest) in trusted.items():
+              path = pathlib.Path(name)
+              fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+              with os.fdopen(fd, 'rb') as stream:
+                  before = os.fstat(stream.fileno())
+                  if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size != size:
+                      raise ValueError('受信引导普通独立文件或大小失败：' + name)
+                  raw = stream.read(size + 1)
+                  after = os.fstat(stream.fileno())
+                  if len(raw) != size or hashlib.sha256(raw).hexdigest() != digest:
+                      raise ValueError('受信引导SHA失败：' + name)
+                  final = path.lstat()
+                  if any(getattr(before, key) != getattr(after, key) or getattr(after, key) != getattr(final, key) for key in fields):
+                      raise ValueError('受信引导同fd或路径身份变化：' + name)
+              print(json.dumps({'trusted': name, 'bytes': size, 'sha256': digest}, sort_keys=True))
+          PY
+          python3 -B restore-source.py --manifest kernel-source.json --destination "$GITHUB_WORKSPACE"
+          python3 -B size-probe-restore.py --manifest size-probe-source.json --destination "$GITHUB_WORKSPACE"
+      - name: 在真实Mac执行独立来源与尺寸诊断回归
+        working-directory: native-kernels/lizhao-office-pdf-ios
+        shell: bash
+        run: python3 -B -m unittest discover -s size_validation -p 'test_*.py' -v
+      - name: 只精确恢复固定final候选缓存
+        id: candidate
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/office-pdf-checkpoint
+          key: office-pdf-ios-checkpoint-v1-7abb8cb2013c4f34181396aed61fe3afee33f28a2b82e38d4bc8d077f2755ee4-final
+          fail-on-cache-miss: true
+      - name: 真实Apple链接strip和逐流压缩计量仅输出有界日志
+        timeout-minutes: 25
+        working-directory: native-kernels/lizhao-office-pdf-ios
+        env:
+          CANDIDATE_CACHE_HIT: ${{ steps.candidate.outputs.cache-hit }}
+        shell: bash
+        run: |
+          test "$CANDIDATE_CACHE_HIT" = true
+          python3 -B size_validation/size_probe.py --checkpoint "$RUNNER_TEMP/office-pdf-checkpoint" --work "$RUNNER_TEMP/office-pdf-size-work" --evidence "$RUNNER_TEMP/office-pdf-size-evidence" --emit-console
